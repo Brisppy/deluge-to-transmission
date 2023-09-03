@@ -101,20 +101,30 @@ class Transmission:
         return _r
 
     # Adds specified torrent to transmission
-    def add_torrent(self, torrent_base64, torrent_data):
+    def add_torrent(self, torrent_base64, torrent_hash, torrent_data):
         """Adds a given torrent to Transmission.
 
         :param torrent_base64: base64 hash of torrent file
+        :param torrent_hash: hash of torrent
         :param torrent_data: dict of torrent information
         :return: non-zero if added successfully
         """
         if not torrent_base64:
             return
 
+        _t = None
+
         try:
             # Send base64 encoded torrent to transmission along with the generated directory, adding in a paused state
             _t = self.put_api('torrent-add', {'metainfo': torrent_base64,
                                               'download-dir': str(torrent_data['save_path']), 'paused': True})
+
+            # verify torrent is at 100% completed
+            _s = self.put_api('torrent-get', {'fields': ['percentDone'], 'ids': [torrent_hash]})
+            if json.loads(_s.text)['arguments']['torrents'][0]['percentDone'] != 1:
+                print('ERROR: Torrent could not be or was not verified by Transmission.')
+                return
+
             return json.loads(_t.text)['arguments']['torrent-added']['hashString']
 
         except BaseException as e:
@@ -236,10 +246,16 @@ def main():
         # Optionally pause torrent in deluge before adding
         deluge.put_api('core.pause_torrent', [torrent_hash])
         # Add torrent to transmission
-        if transmission.add_torrent(get_torrent_base64(deluge_vars['config_path'], torrent_hash), torrent_data):
+        if transmission.add_torrent(get_torrent_base64(deluge_vars['config_path'], torrent_hash), torrent_hash,
+                                    torrent_data):
             # Remove torrent from deluge if it was successfully added
             print('INFO: Torrent ' + torrent_data['name'] + ' successfully added to Transmission.')
             deluge.put_api('core.remove_torrent', [torrent_hash, False])
+
+        else:
+            print('ERROR: Torrent ' + torrent_data['name'] + ' could not be properly added to Transmission.')
+            # resume on deluge side and remove from transmission
+            deluge.put_api('core.resume_torrent', [torrent_hash])
 
     print('INFO: Finished adding torrents to Transmission.')
 
